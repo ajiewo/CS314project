@@ -1,7 +1,8 @@
 import axios from "axios";
 
 // Backend URL
-const SERVER_URL = "https://quality-visually-stinkbug.ngrok-free.app";
+//const SERVER_URL = "https://quality-visually-stinkbug.ngrok-free.app";
+const SERVER_URL = "http://localhost:5000";
 
 async function callSignup() {
   // 1) Get input elements

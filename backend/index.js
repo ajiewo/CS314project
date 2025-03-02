@@ -18,6 +18,17 @@ console.log(DATABASE_URL)
 app.use(cors( {origin: process.env.ORIGIN, credentials: true} ));
 app.use(express.json());
 
+//connect to database, listen on port
+mongoose.connect(DATABASE_URL)
+      .then((result) => {
+            console.log('successfully connected to database');
+            app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
+      })
+      .catch((err) => console.error("error connecting to database:", err));
+
+//moved this line into the .then of connect
+//app.listen(PORT, () => console.log(`Listening on port ${PORT}`))
+
 //define user schema
 const userSchema = new mongoose.Schema({
       email: {type: String, required: true, unique: true},
@@ -26,17 +37,8 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", userSchema);
 
-//connect to database
-mongoose.connect(DATABASE_URL)
-      .then((result) => console.log('successfully connected to database'))
-      .catch((err) => console.error("error connecting to database:", err));
-      //put app.listen in the .then here?
-
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`))
-
-
 //user signup API endpoint
-app.post("/api/auth/signup", async (req, res) => {
+const signup = async (req, res) => {
       try {
             console.log("Received signup request:", req.body);
 
@@ -61,10 +63,11 @@ app.post("/api/auth/signup", async (req, res) => {
             console.error("Signup error:", error);
             res.status(500).json({message: "Internal Server Error"});
       }
-});
+};
 
+//change these to const login = (req, res) => like the signup one
 //user login API endpoint
-app.post("api/auth/login", async (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
       try {
       }
       catch {
@@ -72,7 +75,7 @@ app.post("api/auth/login", async (req, res) => {
 });
 
 //user logout API endpoint
-app.post("api/auth/logout", async (req, res) => {
+app.post("/api/auth/logout", async (req, res) => {
       try {
       }
       catch {
@@ -80,7 +83,7 @@ app.post("api/auth/logout", async (req, res) => {
 });
 
 //get user info API endpoint
-app.get("api/auth/userinfo", async (req, res) => {
+app.get("/api/auth/userinfo", async (req, res) => {
       try {
       }
       catch {
@@ -89,7 +92,7 @@ app.get("api/auth/userinfo", async (req, res) => {
 
 //update user profile API endpoint
 //needs request body with firstname, lastname
-app.post("api/auth/update-profile", async (req, res) => {
+app.post("/api/auth/update-profile", async (req, res) => {
       try {
       }
       catch {
@@ -97,7 +100,7 @@ app.post("api/auth/update-profile", async (req, res) => {
 });
 
 //search contacts API endpoint
-app.post("api/contacts/search", async (req, res) => {
+app.post("/api/contacts/search", async (req, res) => {
       try {
       }
       catch {
@@ -105,7 +108,7 @@ app.post("api/contacts/search", async (req, res) => {
 });
 
 //get contacts API endpoint
-app.get("api/contacts/get-contacts-for-list", async (req, res) => {
+app.get("/api/contacts/get-contacts-for-list", async (req, res) => {
       try {
       }
       catch {
@@ -113,7 +116,7 @@ app.get("api/contacts/get-contacts-for-list", async (req, res) => {
 });
 
 //delete messages API endpoint
-app.delete("api/contacts/delete-dm/:dmId", async (req, res) => {
+app.delete("/api/contacts/delete-dm/:dmId", async (req, res) => {
       try {
       }
       catch {
@@ -121,12 +124,22 @@ app.delete("api/contacts/delete-dm/:dmId", async (req, res) => {
 });
 
 //get messages API endpoint
-app.post("api/messages/get-messages", async (req, res) => {
+app.post("/api/messages/get-messages", async (req, res) => {
       try {
       }
       catch {
       }
 });
+
+//define router and endpoints
+const authRoutes = Router();
+//app.use("/api/auth", authRoutes);
+app.use('/api/auth', authRoutes);
+
+
+//POST /api/auth/signup
+authRoutes.post("/signup", signup);
+
 
 //log data (can get rid of this or use 3rd party middleware to log)
 app.use((req, res, next) => {
@@ -137,8 +150,11 @@ app.use((req, res, next) => {
       next()
 })
 
+//debugging fallback to list unmatched routes
+app.use((req, res) => {
+      console.log(`No matching route for ${req.method} ${req.path}`);
+      res.status(404).send('Not Found');
+  });
+  
 
-app.get('/api/data', (req, res) => {
-   // Fetch data from MongoDB
-   res.json({ message: 'Data fetched successfully' })
-})
+
