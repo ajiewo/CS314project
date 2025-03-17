@@ -5,31 +5,25 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import cookieParser from "cookie-parser";
+import cookie from "cookie";
 import { Server as SocketServer } from "socket.io";
 import http from "http";
 
 //set up constants and variables
 dotenv.config();
 const app = express();
-const PORT = process.env.PORT;
-const DATABASE_URL = process.env.DATABASE_URL;
-const SECRET_KEY = 'mySuperSecreKey'
-const SALT_ROUNDS = 10;
+const { PORT, DATABASE_URL, SECRET_KEY, SALT_ROUNDS, ORIGIN } = process.env;
 const userMap = {};
 let server;
 let io;
-app.set('port', PORT);
 
 //middleware
-app.use(cors( {origin: process.env.ORIGIN, credentials: true} ));
+app.use(cors( {origin: ORIGIN, credentials: true} ));
 app.use(express.json());
 app.use(cookieParser());
 app.use((req, res, next) => {
       //log basic info for incoming requests
-      console.log('new request');
-      console.log('\thost: ', req.hostname);
-      console.log('\tpath: ', req.path);
-      console.log('\tmethod: ', req.method);
+      console.log(`New request: ${req.method} ${req.path} from ${req.hostname}`);
       next();
 });
 
@@ -58,6 +52,7 @@ const userSchema = new mongoose.Schema({
       firstName: {type: String},
       lastName: {type: String},
       color: {type: String},
+      profileSetup: {type: Boolean, default: false},
 });
 const User = mongoose.model("User", userSchema);
 
@@ -66,7 +61,8 @@ const contactSchema = new mongoose.Schema({
       firstName: { type: String, required: true },
       lastName: { type: String, required: true },
       email: { type: String, required: true, unique: true },
-      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      color: { type: String },
 });
 const Contact = mongoose.model("Contact", contactSchema);
   
@@ -92,20 +88,66 @@ mongoose.connect(DATABASE_URL)
                   },
                   path: '/socket.io/'
             });
-            server.listen(PORT, () => console.log(`Listening on port ${PORT}`));
 
-            io.on("connection", (socket) => {
-                  const userId = socket.handshake.query.userId;
-                  console.log(`Client connected: socketID=${socket.id}, userId=${userId}`);
+            io.use((socket, next) => {
+                  const cookies = socket.handshake.headers.cookie || "";
+                  const parsedCookie = cookie.parse(cookies);
+                  const token = parsedCookie.jwt;
+                  if (!token) return next(new Error("Authentication error, no token"));
 
-                  userMap[userId] = socket.id;
-
-                  socket.on("disconnect", () => {
-                        console.log(`Client disconnected: socketId=${socket.id}, userId=${userId}`);
-                        delete userMap[userId];
+                  jwt.verify(token, SECRET_KEY, (err, payload) => {
+                        if (err) return next(new Error("Authentication error, couldn't verify token"));
+                        socket.userId = payload.userId;
+                        next();
                   });
             });
-      
+
+            io.on("connection", (socket) => {
+                  const userId = socket.userId;
+                  console.log(`Client connected: socketID=${socket.id}, userId=${userId}`);
+                  userMap[userId] = socket.id;
+                  socket.on("disconnect", (reason) => {
+                        console.log(`Client disconnected: socketId=${socket.id}, userId=${userId}, reason=${reason}`);
+                        delete userMap[userId];
+                  });
+
+                  // Listen for messages from the frontend
+                  socket.on("sendMessage", async (messageData) => {
+                        console.log("Received WebSocket message:", messageData);
+                        const { sender, recipient, content, messageType } = messageData;
+
+                        if (!sender || !recipient || !content) {
+                        console.log("Missing message fields");
+                        return;
+                        }
+                        const senderObject = await User.findById(sender);
+                        const recipientObject = await User.findById(recipient);
+                        
+
+                        // Save the message to MongoDB
+                        console.log("ts:");
+                        console.log(senderObject, recipientObject);
+                        const newMessage = new Message({ sender: senderObject, recipient: recipientObject, content, messageType });
+
+                        try {
+                              await newMessage.save();
+                              console.log("Message saved:", newMessage);
+
+                              // Emit the message to the recipient if they are online
+                              if (userMap[recipient]) {
+                                    io.to(userMap[recipient]).emit("receiveMessage", newMessage);
+                              }
+                              if (userMap[sender]) {
+                                    io.to(userMap[sender]).emit("receiveMessage", newMessage);
+                              }
+                        } 
+                        catch (error) {
+                              console.error("Error saving message:", error);
+                        }
+                  });
+            });
+
+            server.listen(PORT, () => console.log(`Listening on port ${PORT}`));
       })
       .catch((err) => console.error("error connecting to database:", err));
 
@@ -126,7 +168,7 @@ const signup = async (req, res) => {
                   console.error("The email is already in use, sending 409 Conflict");
                   return res.status(409).json({message: "The email is already in use"});
             }
-            const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+            const hashedPassword = await bcrypt.hash(password, 10);
             const newUser = new User({ email, password: hashedPassword });
             const token = jwt.sign({email, userId: newUser.id}, SECRET_KEY, {
                   expiresIn: '1h',
@@ -135,8 +177,8 @@ const signup = async (req, res) => {
                   secure: true,
                   sameSite: 'None',
                   maxAge: 60 * 60 * 1000, //1 hour
+                  partitioned: true,
             });
-            
 
             const savedUser = await newUser.save();
 
@@ -218,6 +260,10 @@ const userinfo = async (req, res) => {
                   id: currentUser.id,
                   email: currentUser.email,
                   password: currentUser.password,
+                  color: currentUser.color,
+                  firstName: currentUser.firstName,
+                  lastName: currentUser.lastName,
+                  profileSetup: true,
             });
       } catch (error) {
             console.error('Error fetching user info:', error);
@@ -231,13 +277,13 @@ const updateprofile = async (req, res) => {
             const { color, firstName, lastName } = req.body;
             const currentUser = await User.findById(req.userId);
             const email = currentUser.email;
-            if (!color || !firstName || !lastName) {
+            if (!firstName || !lastName) {
                   return res.status(400).json({ message: "Missing required fields" });
             }
             const user = await User.findOneAndUpdate(
                   { email },
                   { firstName, lastName, color },
-                  { new: true }
+                  //{ new: true }
             );
             if (!user) {
                   return res.status(404).json({ message: "User not found" });
@@ -260,15 +306,15 @@ authRoutes.post("/logout", logout);
 authRoutes.get("/userinfo", verifyToken, userinfo);
 authRoutes.post("/update-profile", verifyToken, updateprofile);
 
-
 //search contacts API endpoint
 const search = async (req, res) => {
       try {
-            const { query } = req.body;
+            const query = req.body.searchTerm;
+            //console.log(query);
             if (!query) {
                   return res.status(400).json({ message: "Search query is required" });
             }
-            const contacts = await Contact.find({
+            const contacts = await User.find({
                   $or: [
                         { firstName: { $regex: query, $options: "i" } },
                         { lastName: { $regex: query, $options: "i" } },
@@ -295,6 +341,44 @@ const getContacts = async (req, res) => {
       }
 };
 
+const allContacts = async (req, res) => {
+      try {
+            const currentUserId = req.userId;
+            //create array of all users besides current user
+            const users = await User.find({ _id: { $ne: currentUserId } }, "firstName lastName email color");
+            console.log("users besides self: ", users);
+            res.status(200).json({ contacts: users });
+      }
+      catch (error) {
+            console.error("Error getting all contacts:", error);
+            res.status(500).json({ message: "Server or database issue" });
+      }
+};
+
+//delete messages API endpoint
+const deleteDm = async (req, res) => {
+      try {
+            const { dmId } = req.params;
+            if (!dmId) {
+                  return res.status(400).json({ message: "Missing or invalid dmId" });
+            }
+
+            const deletedMessages = await Message.deleteMany({
+                  $or: [
+                        { sender: req.userId, recipient: dmId },
+                        { sender: dmId, recipient: req.userId }
+                  ]
+            });
+            console.log(`deleted ${deletedMessages.deletedCount} messages`);
+
+            res.status(200).json({ message: "DM deleted successfully" });
+      } 
+      catch (error) {
+            console.error("Error deleting message:", error);
+            res.status(500).json({ message: "Server or database issue" });
+      }
+};
+
 //placeholder for unimplemented endpoints
 const empty = (req, res) => {
       res.status(200).json({ message: "not implemented yet" })
@@ -304,43 +388,30 @@ const empty = (req, res) => {
 const contactRoutes = Router();
 app.use("/api/contacts", contactRoutes);
 contactRoutes.post("/search", verifyToken, search);
-contactRoutes.get("/get-contacts-for-list", verifyToken, getContacts);
-contactRoutes.get("/all-contacts", verifyToken, empty); //ts line
+//need to change this to have proper getContacts function
+contactRoutes.get("/get-contacts-for-list", verifyToken, allContacts);
+contactRoutes.get("/all-contacts", verifyToken, allContacts);
+contactRoutes.delete("/delete-dm/:dmId", verifyToken, deleteDm);
 
 //define /api/channel router and endpoints
 const channelRoutes = Router();
 app.use("/api/channel", channelRoutes);
 channelRoutes.get("/get-user-channels", verifyToken, empty); //ts line
 
-//delete messages API endpoint
-const deleteDm = async (req, res) => {
-      try {
-            const { dmId } = req.params;
-            const deletedMessage = await Message.findByIdAndDelete(dmId);
-            if (!deletedMessage) {
-                  return res.status(400).json({ message: "Missing or invalid dmId" });
-            }
-            res.status(200).json({ message: "DM deleted successfully" });
-      } 
-      catch (error) {
-            console.error("Error deleting message:", error);
-            res.status(500).json({ message: "Server or database issue" });
-      }
-};
-
 //get messages API endpoint
 const getMessages = async (req, res) => {
       try {
-            const { contactId } = req.body;
+            console.log("get messages req body: ", req.body);
+            const contactId = req.body.id;
             if (!contactId) {
                   return res.status(400).json({ message: "Missing one or both user IDs" });
             }
             const messages = await Message.find({
                   $or: [
-                        { sender: req.userId, receiver: contactId },
-                        { sender: contactId, receiver: req.userId }
+                        { sender: req.userId, recipient: contactId },
+                        { sender: contactId, recipient: req.userId }
                   ]
-            }).sort({ createdAt: 1 });
+            }).sort({ timestamp: 1 });
             res.status(200).json({ messages });
       } 
       catch (error) {
@@ -349,33 +420,8 @@ const getMessages = async (req, res) => {
       }
 };
 
-
-const chatHandler = (req, res) => {
-      console.log('chat request body: ', req.body);
-      const { sender, recipient, content, messageType } = req.body;
-      if (!sender || !content) {
-            console.log("Missing sender or text");
-            return res.status(400).json({ error: "Missing sender or text" });
-      }
-
-      const newMessage = new Message ({ sender, recipient, content, messageType });
-      if (userMap[sender]) {
-            io.to(userMap[sender]).emit("newMessage", newMessage);
-      }
-      if (userMap[recipient]) {
-            io.to(userMap[recipient]).emit("newMessage", newMessage);
-      }
-      console.log(`Emitted ${newMessage}`);
-      newMessage.save();
-
-      return res.status(201).json({ success: true, message: newMessage });
-};
-
 //define /api/messages router and endpoints
-app.post("/api/messages", verifyToken, chatHandler);
-app.delete("/api/messages/delete-dm/:dmId", verifyToken, deleteDm);
 app.post("/api/messages/get-messages", verifyToken, getMessages);
-
 
 //debugging fallback to list unmatched routes
 app.use((req, res) => {
@@ -383,5 +429,3 @@ app.use((req, res) => {
       res.status(404).send('Not Found');
   });
   
-
-
