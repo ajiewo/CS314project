@@ -1,3 +1,7 @@
+//AUTHOR: Daniel Schuster
+
+/*************************IMPORTS**************************/
+
 import dotenv from "dotenv";
 import express, {Router} from "express";
 import cors from "cors";
@@ -9,15 +13,17 @@ import cookie from "cookie";
 import { Server as SocketServer } from "socket.io";
 import http from "http";
 
-//set up constants and variables
+/*****************CONSTANTS AND VARIABLES******************/
+
 dotenv.config();
 const app = express();
-const { PORT, DATABASE_URL, SECRET_KEY, SALT_ROUNDS, ORIGIN } = process.env;
+const { PORT, DATABASE_URL, SECRET_KEY, ORIGIN } = process.env;
 const userMap = {};
 let server;
 let io;
 
-//middleware
+/*************************MIDDLEWARE***********************/
+
 app.use(cors( {origin: ORIGIN, credentials: true} ));
 app.use(express.json());
 app.use(cookieParser());
@@ -27,9 +33,10 @@ app.use((req, res, next) => {
       next();
 });
 
-// Middleware to verify JWT
+//function to verify JWT token
 const verifyToken = (req, res, next) => {
       const token = req.cookies.jwt;
+
       if (!token) {
             return res.status(401).json({ message: 'Not authenticated' });
       }
@@ -45,6 +52,8 @@ const verifyToken = (req, res, next) => {
 };
 
 
+/*******************DATABASE SCHEMAS***************/
+
 //define user schema
 const userSchema = new mongoose.Schema({
       email: {type: String, required: true, unique: true},
@@ -56,6 +65,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", userSchema);
 
+/*
 //define contact schema
 const contactSchema = new mongoose.Schema({
       firstName: { type: String, required: true },
@@ -65,6 +75,7 @@ const contactSchema = new mongoose.Schema({
       color: { type: String },
 });
 const Contact = mongoose.model("Contact", contactSchema);
+*/
   
 //define message schema
 const messageSchema = new mongoose.Schema({
@@ -76,7 +87,10 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model("Message", messageSchema);
 
-//connect to database, start listening on PORT
+
+/*******************DATABASE CONNECTION****************/
+
+//connect to database and setup sockets
 mongoose.connect(DATABASE_URL)
       .then((result) => {
             console.log(`successfully connected to database ${DATABASE_URL}`);
@@ -102,6 +116,7 @@ mongoose.connect(DATABASE_URL)
                   });
             });
 
+            //map user to a socket when they connect
             io.on("connection", (socket) => {
                   const userId = socket.userId;
                   console.log(`Client connected: socketID=${socket.id}, userId=${userId}`);
@@ -123,17 +138,13 @@ mongoose.connect(DATABASE_URL)
                         const senderObject = await User.findById(sender);
                         const recipientObject = await User.findById(recipient);
                         
-
-                        // Save the message to MongoDB
-                        console.log("ts:");
-                        console.log(senderObject, recipientObject);
+                        //save the message in database 
                         const newMessage = new Message({ sender: senderObject, recipient: recipientObject, content, messageType });
 
                         try {
                               await newMessage.save();
-                              console.log("Message saved:", newMessage);
 
-                              // Emit the message to the recipient if they are online
+                              //emit the message to the recipient
                               if (userMap[recipient]) {
                                     io.to(userMap[recipient]).emit("receiveMessage", newMessage);
                               }
@@ -151,6 +162,9 @@ mongoose.connect(DATABASE_URL)
       })
       .catch((err) => console.error("error connecting to database:", err));
 
+
+
+/***********************AUTH API ENDPOINTS***************************/
 
 //user signup API endpoint
 const signup = async (req, res) => {
@@ -249,7 +263,7 @@ const logout = (req, res) => {
       }
 };
 
-// Protected route to get user info
+//get user info API endpoint
 const userinfo = async (req, res) => {
       try {
             const currentUser = await User.findById(req.userId);
@@ -270,6 +284,7 @@ const userinfo = async (req, res) => {
             res.status(500).json({ message: 'Server error' });
       }
 };
+
 
 //update user profile API endpoint
 const updateprofile = async (req, res) => {
@@ -297,6 +312,7 @@ const updateprofile = async (req, res) => {
       }
 };
 
+
 //define /api/auth router and endpoints
 const authRoutes = Router();
 app.use('/api/auth', authRoutes);
@@ -306,11 +322,13 @@ authRoutes.post("/logout", logout);
 authRoutes.get("/userinfo", verifyToken, userinfo);
 authRoutes.post("/update-profile", verifyToken, updateprofile);
 
+
+/********************CONTACTS API ENDPOINTS**********************/
+
 //search contacts API endpoint
 const search = async (req, res) => {
       try {
             const query = req.body.searchTerm;
-            //console.log(query);
             if (!query) {
                   return res.status(400).json({ message: "Search query is required" });
             }
@@ -379,10 +397,6 @@ const deleteDm = async (req, res) => {
       }
 };
 
-//placeholder for unimplemented endpoints
-const empty = (req, res) => {
-      res.status(200).json({ message: "not implemented yet" })
-};
 
 //define /api/contacts router and endpoints
 const contactRoutes = Router();
@@ -393,10 +407,8 @@ contactRoutes.get("/get-contacts-for-list", verifyToken, allContacts);
 contactRoutes.get("/all-contacts", verifyToken, allContacts);
 contactRoutes.delete("/delete-dm/:dmId", verifyToken, deleteDm);
 
-//define /api/channel router and endpoints
-const channelRoutes = Router();
-app.use("/api/channel", channelRoutes);
-channelRoutes.get("/get-user-channels", verifyToken, empty); //ts line
+
+/************************MESSAGES API ENDPOINTS**********************/
 
 //get messages API endpoint
 const getMessages = async (req, res) => {
@@ -420,12 +432,27 @@ const getMessages = async (req, res) => {
       }
 };
 
-//define /api/messages router and endpoints
+//define /api/messages endpoint
 app.post("/api/messages/get-messages", verifyToken, getMessages);
+
+
+/********************CHANNEL API ENDPOINTS*******************/
+
+//placeholder for unimplemented endpoints
+const empty = (req, res) => {
+      res.status(200).json({ message: "not implemented yet" })
+};
+
+//define /api/channel router and endpoints
+const channelRoutes = Router();
+app.use("/api/channel", channelRoutes);
+channelRoutes.get("/get-user-channels", verifyToken, empty); //ts line
+
+/************************CATCH ALL ROUTE***********************/
 
 //debugging fallback to list unmatched routes
 app.use((req, res) => {
       console.log(`No matching route for ${req.method} ${req.path}`);
       res.status(404).send('Not Found');
-  });
+});
   
