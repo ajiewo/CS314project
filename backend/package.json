@@ -4,7 +4,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "cross-env NODE_ENV=test jest --detectOpenHandles",
     "dev": "nodemon server.js"
   },
   "keywords": [],
@@ -12,6 +12,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@babel/core": "^7.26.10",
+    "@babel/preset-env": "^7.26.9",
+    "@shelf/jest-mongodb": "^5.1.0",
+    "babel-jest": "^29.7.0",
     "bcrypt": "^5.1.1",
     "connect-mongo": "^5.1.0",
     "cookie-parser": "^1.4.7",
@@ -20,8 +24,13 @@
     "express": "^4.21.2",
     "express-session": "^1.18.1",
     "http": "^0.0.1-security",
+    "jest": "^29.7.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.11.0",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "supertest": "^7.0.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
   }
 }

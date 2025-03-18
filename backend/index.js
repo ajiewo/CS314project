@@ -46,7 +46,7 @@ const verifyToken = (req, res, next) => {
   
       jwt.verify(token, SECRET_KEY, (err, payload) => {
             if (err) {
-                  console.error('Invalid token:', err);
+                  console.error(`Invalid token ${token}:`, err);
                   return res.status(403).json({ message: 'Invalid or expired token.' });
             }
             req.userId = payload.userId;
@@ -66,7 +66,7 @@ const userSchema = new mongoose.Schema({
       color: {type: String},
       profileSetup: {type: Boolean, default: false},
 });
-const User = mongoose.model("User", userSchema);
+export const User = mongoose.model("User", userSchema);
 
 //define message schema
 const messageSchema = new mongoose.Schema({
@@ -83,6 +83,7 @@ const Message = mongoose.model("Message", messageSchema);
 
 //connect to database and setup sockets.  the chat handling for instant messaging
 //via websockets is performed here
+if (process.env.NODE_ENV !== "test") {
 mongoose.connect(DATABASE_URL)
       .then((result) => {
             console.log(`successfully connected to database ${DATABASE_URL}`);
@@ -153,6 +154,7 @@ mongoose.connect(DATABASE_URL)
             server.listen(PORT, () => console.log(`Listening on port ${PORT}`));
       })
       .catch((err) => console.error("error connecting to database:", err));
+}
 
 
 /***********************AUTH API ENDPOINTS***************************/
@@ -365,7 +367,7 @@ const getContacts = async (req, res) => {
             });
 
             const uniqueUserIds = Array.from(userIds);
-            const contacts = await User.find({ _id: { $in: uniqueUserIds } }, "_id firstName lastName email color");
+            const users = await User.find({ _id: { $in: uniqueUserIds } }, "_id firstName lastName email color");
 
             //sort contacts by the latest message timestamp
             const sortedContacts = users.sort((a, b) => {
@@ -483,3 +485,4 @@ app.use((req, res) => {
       res.status(404).send('Not Found');
 });
   
+export default app; 
